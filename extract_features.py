@@ -1,6 +1,8 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
 import sys
+import io
+import zipfile
 # import argparse
 
 # parser = argparse.ArgumentParser()
@@ -51,6 +53,31 @@ def load_frame(frame_file, resize=False):
 
     return data
 
+
+def load_zipframe(zipdata, name, resize=False):
+
+    #data = Image.open(frame_file)
+    stream = zipdata.read(name)
+    data = Image.open(io.BytesIO(stream))
+
+    assert(data.size[1] == 256)
+    assert(data.size[0] == 340)
+
+    if resize:
+        data = data.resize((224, 224), Image.ANTIALIAS)
+
+    data = np.array(data)
+    data = data.astype(float)
+    data = (data * 2 / 255) - 1
+
+    assert(data.max()<=1.0)
+    assert(data.min()>=-1.0)
+
+    return data
+
+
+
+
 def oversample_data(data): # (39, 16, 224, 224, 2)  # Check twice
 
     data_flip = np.array(data[:,:,:,::-1,:])
@@ -90,6 +117,23 @@ def load_rgb_batch(frames_dir, rgb_files,
     return batch_data
 
 
+def load_ziprgb_batch(rgb_zipdata, rgb_files, 
+                   frame_indices, resize=False):
+
+    if resize:
+        batch_data = np.zeros(frame_indices.shape + (224,224,3))
+    else:
+        batch_data = np.zeros(frame_indices.shape + (256,340,3))
+
+    for i in range(frame_indices.shape[0]):
+        for j in range(frame_indices.shape[1]):
+
+            batch_data[i,j,:,:,:] = load_zipframe(rgb_zipdata, 
+                rgb_files[frame_indices[i][j]], resize)
+
+    return batch_data
+
+
 def load_flow_batch(frames_dir, flow_x_files, flow_y_files, 
                     frame_indices, resize=False):
 
@@ -110,9 +154,30 @@ def load_flow_batch(frames_dir, flow_x_files, flow_y_files,
     return batch_data
 
 
+def load_zipflow_batch(flow_x_zipdata, flow_y_zipdata, 
+                    flow_x_files, flow_y_files, 
+                    frame_indices, resize=False):
+
+    if resize:
+        batch_data = np.zeros(frame_indices.shape + (224,224,2))
+    else:
+        batch_data = np.zeros(frame_indices.shape + (256,340,2))
+
+    for i in range(frame_indices.shape[0]):
+        for j in range(frame_indices.shape[1]):
+
+            batch_data[i,j,:,:,0] = load_zipframe(flow_x_zipdata, 
+                flow_x_files[frame_indices[i][j]], resize)
+
+            batch_data[i,j,:,:,1] = load_zipframe(flow_y_zipdata, 
+                flow_y_files[frame_indices[i][j]], resize)
+
+    return batch_data
+
+
 
 def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
-    input_dir='', output_dir='', batch_size=40):
+    input_dir='', output_dir='', batch_size=40, usezip=False):
 
     chunk_size = 16
 
@@ -156,27 +221,33 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
 
         frames_dir = os.path.join(input_dir, video_name)
 
-        # Unzip
-        if 'img.zip' in os.listdir(frames_dir):
-            os.system('unzip {} -d {}'.format(
-                os.path.join(frames_dir, 'img.zip'), frames_dir))
-            os.system('unzip {} -d {}'.format(
-                os.path.join(frames_dir, 'flow_x.zip'), frames_dir))
-            os.system('unzip {} -d {}'.format(
-                os.path.join(frames_dir, 'flow_y.zip'), frames_dir))
-
 
         if mode == 'rgb':
-            rgb_files = [i for i in os.listdir(frames_dir) if i.startswith('img')]
+            if usezip:
+                rgb_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'img.zip'), 'r')
+                rgb_files = [i for i in rgb_zipdata.namelist() if i.startswith('img')]
+            else:
+                rgb_files = [i for i in os.listdir(frames_dir) if i.startswith('img')]
+
             rgb_files.sort()
             frame_cnt = len(rgb_files)
+
         else:
-            flow_x_files = [i for i in os.listdir(frames_dir) if i.startswith('flow_x')]
-            flow_y_files = [i for i in os.listdir(frames_dir) if i.startswith('flow_y')]
+            if usezip:
+                flow_x_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'flow_x.zip'), 'r')
+                flow_x_files = [i for i in flow_x_zipdata.namelist() if i.startswith('x_')]
+
+                flow_y_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'flow_y.zip'), 'r')
+                flow_y_files = [i for i in flow_y_zipdata.namelist() if i.startswith('y_')]
+            else:
+                flow_x_files = [i for i in os.listdir(frames_dir) if i.startswith('flow_x')]
+                flow_y_files = [i for i in os.listdir(frames_dir) if i.startswith('flow_y')]
+
             flow_x_files.sort()
             flow_y_files.sort()
             assert(len(flow_y_files) == len(flow_x_files))
             frame_cnt = len(flow_y_files)
+
 
 
         # clipped_length = (frame_cnt // chunk_size) * chunk_size   # Cut frames
@@ -209,11 +280,22 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
             require_resize = sample_mode == 'resize'
 
             if mode == 'rgb':
-                batch_data = load_rgb_batch(frames_dir, rgb_files, 
-                    frame_indices[batch_id], require_resize)
+                if usezip:
+                    batch_data = load_ziprgb_batch(rgb_zipdata, rgb_files, 
+                        frame_indices[batch_id], require_resize)
+                else:                
+                    batch_data = load_rgb_batch(frames_dir, rgb_files, 
+                        frame_indices[batch_id], require_resize)
             else:
-                batch_data = load_flow_batch(frames_dir, flow_x_files, flow_y_files, 
-                    frame_indices[batch_id], require_resize)
+                if usezip:
+                    batch_data = load_zipflow_batch(
+                        flow_x_zipdata, flow_y_zipdata,
+                        flow_x_files, flow_y_files, 
+                        frame_indices[batch_id], require_resize)
+                else:
+                    batch_data = load_flow_batch(frames_dir, 
+                        flow_x_files, flow_y_files, 
+                        frame_indices[batch_id], require_resize)
 
             if sample_mode == 'oversample':
                 batch_data_ten_crop = oversample_data(batch_data)
@@ -246,9 +328,6 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
         print('{} done: {} / {}, {}'.format(
             video_name, frame_cnt, clipped_length, full_features.shape))
 
-        # Clear up
-        if 'img.zip' in os.listdir(frames_dir):
-            os.system('rm {}/*.jpg'.format(frames_dir))
 
 
 if __name__ == '__main__':
@@ -262,6 +341,10 @@ if __name__ == '__main__':
     parser.add_argument('--sample_mode', type=str)
     parser.add_argument('--frequency', type=int, default=16)
 
+    parser.add_argument('--usezip', dest='usezip', action='store_true')
+    parser.add_argument('--no-usezip', dest='usezip', action='store_false')
+    parser.set_defaults(usezip=True)
+
     args = parser.parse_args()
 
     run(mode=args.mode, 
@@ -270,7 +353,8 @@ if __name__ == '__main__':
         input_dir=args.input_dir, 
         output_dir=args.output_dir,
         batch_size=args.batch_size,
-        frequency=args.frequency)
+        frequency=args.frequency,
+        usezip=args.usezip)
 
     # run(mode='rgb', 
     #     load_model='./models/rgb_imagenet.pt',
