@@ -1,4 +1,27 @@
-# I3D models trained on Kinetics
+# I3D Feature Extraction
+
+## Usage
+* Format the videos to 25 FPS.
+* Convert the videos into frame images and optical flows.
+* `python3 extract_features.py ...`
+
+
+## Parameters
+<pre>
+--mode:              rgb or flow
+--load_model:        path of the I3D model
+--input_dir:         folder of converted videos
+--output_dir:        folder of extracted features
+--batch_size:        batch size for snippets
+--sample_mode:       oversample, center_crop or resize
+--frequency:         how many frames between adjacent snippet
+--usezip/no-usezip:  whether the frame images are zipped
+</pre>
+
+## Important: Use PyTorch 0.3
+
+
+# I3D models trained on Kinetics (Old Readme)
 
 ## Overview
 
