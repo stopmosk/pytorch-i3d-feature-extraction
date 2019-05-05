@@ -21,7 +21,17 @@
 
 ## Input Folder Structure
 <pre>
-folder --- Video 1 ---
+InputFolder
+├── video1
+│   ├── flow_x.zip
+│   ├── flow_y.zip
+│   └── img.zip
+└── video2
+    ├── flow_x.zip
+    ├── flow_y.zip
+    └── img.zip
+</pre>
+Frame images and flows can also be unzipped.
 
 
 
