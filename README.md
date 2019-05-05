@@ -5,7 +5,6 @@
 * Convert the videos into frame images and optical flows.
 * `python3 extract_features.py ...`
 
-
 ## Parameters
 <pre>
 --mode:              rgb or flow
@@ -19,6 +18,11 @@
 </pre>
 
 ## Important: Use PyTorch 0.3
+
+## Input Folder Structure
+<pre>
+folder --- Video 1 ---
+
 
 
 # I3D models trained on Kinetics (Old Readme)
