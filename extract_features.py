@@ -3,18 +3,6 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 import sys
 import io
 import zipfile
-# import argparse
-
-# parser = argparse.ArgumentParser()
-# parser.add_argument('-mode', type=str, help='rgb or flow')
-# parser.add_argument('-load_model', type=str)
-# parser.add_argument('-root', type=str)
-# parser.add_argument('-gpu', type=str)
-# parser.add_argument('-save_dir', type=str)
-
-# args = parser.parse_args()
-# os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -56,7 +44,6 @@ def load_frame(frame_file, resize=False):
 
 def load_zipframe(zipdata, name, resize=False):
 
-    #data = Image.open(frame_file)
     stream = zipdata.read(name)
     data = Image.open(io.BytesIO(stream))
 
@@ -185,7 +172,7 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
     assert(sample_mode in ['oversample', 'center_crop', 'resize'])
 
     # setup dataset
-    test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])  ## Is this ok???
+    test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
     
     # setup the model
     if mode == 'flow':
@@ -193,7 +180,7 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
     else:
         i3d = InceptionI3d(400, in_channels=3)
     
-    #i3d.replace_logits(157)  ## Why??
+    #i3d.replace_logits(157)
     i3d.load_state_dict(torch.load(load_model))
     i3d.cuda()
 
@@ -205,13 +192,12 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
 
         b_data = Variable(b_data.cuda(), volatile=True).float()
         b_features = i3d.extract_features(b_data)
-
+        
         b_features = b_features.data.cpu().numpy()[:,:,0,0,0]
         return b_features
 
 
     video_names = [i for i in os.listdir(input_dir) if i[0] == 'v']
-    #video_names = ['video_test_0000062', 'video_test_0000242', 'video_test_0001219']
 
     for video_name in video_names:
 
@@ -355,49 +341,3 @@ if __name__ == '__main__':
         batch_size=args.batch_size,
         frequency=args.frequency,
         usezip=args.usezip)
-
-    # run(mode='rgb', 
-    #     load_model='./models/rgb_imagenet.pt',
-    #     oversample=False,
-    #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_TEST_FRAMES', 
-    #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-test-rgb')
-    #     batch_size=args.batch_size)
-
-    # run(mode='flow', 
-    #     load_model='./models/flow_imagenet.pt',
-    #     oversample=False,
-    #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_VAL_FRAMES', 
-    #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-val-flow')
-
-    # run(mode='rgb', 
-    #     load_model='./models/rgb_imagenet.pt',
-    #     oversample=False,
-    #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_VAL_FRAMES', 
-    #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-val-rgb')
-
-
-    # # run(mode='flow', 
-    # #     load_model='./models/flow_imagenet.pt',
-    # #     oversample=True,
-    # #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_TEST_FRAMES', 
-    # #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-test-flow-oversample')
-
-    # # run(mode='rgb', 
-    # #     load_model='./models/rgb_imagenet.pt',
-    # #     oversample=True,
-    # #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_TEST_FRAMES', 
-    # #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-test-rgb-oversample')
-
-    # # run(mode='flow', 
-    # #     load_model='./models/flow_imagenet.pt',
-    # #     oversample=True,
-    # #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_VAL_FRAMES', 
-    # #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-val-flow-oversample')
-
-    # # run(mode='rgb', 
-    # #     load_model='./models/rgb_imagenet.pt',
-    # #     oversample=True,
-    # #     input_dir='/home/chang/Desktop/Action-Localization/THUMOS14_VAL_FRAMES', 
-    # #     output_dir='/home/chang/Desktop/Action-Localization/pytorch-i3d/features/thumos-val-rgb-oversample')
-
-
