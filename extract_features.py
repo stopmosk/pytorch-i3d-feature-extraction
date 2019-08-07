@@ -11,8 +11,6 @@ from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import argparse
 import torchvision
-from torchvision import transforms
-import videotransforms
 from PIL import Image
 
 import numpy as np
@@ -170,9 +168,6 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
 
     assert(mode in ['rgb', 'flow'])
     assert(sample_mode in ['oversample', 'center_crop', 'resize'])
-
-    # setup dataset
-    test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
     
     # setup the model
     if mode == 'flow':
