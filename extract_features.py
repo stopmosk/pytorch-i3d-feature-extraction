@@ -192,11 +192,12 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
         return b_features
 
 
-    video_names = [i for i in os.listdir(input_dir) if i[0] == 'v']
+    video_names = [i for i in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, i))]
 
     for video_name in video_names:
 
-        save_file = '{}-{}.npz'.format(video_name, mode)
+        # save_file = '{}-{}.npz'.format(video_name, mode)
+        save_file = '{}.npy'.format(video_name)
         if save_file in os.listdir(output_dir):
             continue
 
@@ -204,11 +205,17 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
 
 
         if mode == 'rgb':
+            # if usezip:
+            #     rgb_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'img.zip'), 'r')
+            #     rgb_files = [i for i in rgb_zipdata.namelist() if i.startswith('img')]
+            # else:
+            #     rgb_files = [i for i in os.listdir(frames_dir) if i.startswith('img')]
+
             if usezip:
                 rgb_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'img.zip'), 'r')
-                rgb_files = [i for i in rgb_zipdata.namelist() if i.startswith('img')]
+                rgb_files = [i for i in rgb_zipdata.namelist() if i.endswith('jpg')]
             else:
-                rgb_files = [i for i in os.listdir(frames_dir) if i.startswith('img')]
+                rgb_files = [i for i in os.listdir(frames_dir) if i.endswith('jpg')]
 
             rgb_files.sort()
             frame_cnt = len(rgb_files)
@@ -301,10 +308,11 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
         full_features = [np.expand_dims(i, axis=0) for i in full_features]
         full_features = np.concatenate(full_features, axis=0)
 
-        np.savez(os.path.join(output_dir, save_file), 
-            feature=full_features,
-            frame_cnt=frame_cnt,
-            video_name=video_name)
+        # np.savez(os.path.join(output_dir, save_file),
+        #     feature=full_features,
+        #     frame_cnt=frame_cnt,
+        #     video_name=video_name)
+        np.save(os.path.join(output_dir, save_file), full_features)
 
         print('{} done: {} / {}, {}'.format(
             video_name, frame_cnt, clipped_length, full_features.shape))
