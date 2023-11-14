@@ -1,75 +1,61 @@
-import os
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-import sys
-import io
-import zipfile
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.optim import lr_scheduler
-from torch.autograd import Variable
 import argparse
-import torchvision
-from PIL import Image
+import os
 
+import cv2
 import numpy as np
+import torch
+from tqdm import tqdm
 
-from pytorch_i3d import InceptionI3d
+from movinets import MoViNet
+from movinets.config import _C
 
-import pdb
+
+def resampled_video(input_path, target_fps=25):
+    video_capture = cv2.VideoCapture(input_path)
+    original_fps = video_capture.get(cv2.CAP_PROP_FPS)
+
+    # Calculate the frame interval to achieve the target fps
+    frame_interval = int(round(original_fps / target_fps))
+    frame_count = 0
+
+    while True:
+        ret, frame = video_capture.read()
+        if not ret:
+            break
+        if frame_count % frame_interval == 0:
+            yield frame
+        frame_count += 1
+
+    video_capture.release()
 
 
-def load_frame(frame_file, resize=False):
+def load_frame(frame, resize=False):
+    # data = Image.open(frame)
+    data = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    data = Image.open(frame_file)
-
-    assert(data.size[1] == 256)
-    assert(data.size[0] == 340)
+    # print(data.shape)  # (180, 320, 3)
+    # assert data.shape[1] == 256
+    # assert data.shape[0] == 340
 
     if resize:
-        data = data.resize((224, 224), Image.ANTIALIAS)
+        # data = data.resize((224, 224), Image.ANTIALIAS)
+        data = cv2.resize(data, (224, 224), interpolation=cv2.INTER_AREA)
 
-    data = np.array(data)
-    data = data.astype(float)
+    data = data.astype(np.float32)
     data = (data * 2 / 255) - 1
 
-    assert(data.max()<=1.0)
-    assert(data.min()>=-1.0)
+    assert data.max() <= 1.0
+    assert data.min() >= -1.0
 
     return data
 
 
-def load_zipframe(zipdata, name, resize=False):
-
-    stream = zipdata.read(name)
-    data = Image.open(io.BytesIO(stream))
-
-    assert(data.size[1] == 256)
-    assert(data.size[0] == 340)
-
-    if resize:
-        data = data.resize((224, 224), Image.ANTIALIAS)
-
-    data = np.array(data)
-    data = data.astype(float)
-    data = (data * 2 / 255) - 1
-
-    assert(data.max()<=1.0)
-    assert(data.min()>=-1.0)
-
-    return data
-
-
-
-
-def oversample_data(data): # (39, 16, 224, 224, 2)  # Check twice
-
-    data_flip = np.array(data[:,:,:,::-1,:])
+def oversample_data(data):  # (39, 16, 224, 224, 2)  # Check twice
+    data_flip = np.array(data[:, :, :, ::-1, :])
 
     data_1 = np.array(data[:, :, :224, :224, :])
     data_2 = np.array(data[:, :, :224, -224:, :])
-    data_3 = np.array(data[:, :, 16:240, 58:282, :])   # ,:,16:240,58:282,:
+    data_3 = np.array(data[:, :, 16:240, 58:282, :])
     data_4 = np.array(data[:, :, -224:, :224, :])
     data_5 = np.array(data[:, :, -224:, -224:, :])
 
@@ -79,230 +65,131 @@ def oversample_data(data): # (39, 16, 224, 224, 2)  # Check twice
     data_f_4 = np.array(data_flip[:, :, -224:, :224, :])
     data_f_5 = np.array(data_flip[:, :, -224:, -224:, :])
 
-    return [data_1, data_2, data_3, data_4, data_5,
-        data_f_1, data_f_2, data_f_3, data_f_4, data_f_5]
+    return [
+        data_1,
+        data_2,
+        data_3,
+        data_4,
+        data_5,
+        data_f_1,
+        data_f_2,
+        data_f_3,
+        data_f_4,
+        data_f_5,
+    ]
 
 
-
-
-def load_rgb_batch(frames_dir, rgb_files, 
-                   frame_indices, resize=False):
-
-    if resize:
-        batch_data = np.zeros(frame_indices.shape + (224,224,3))
-    else:
-        batch_data = np.zeros(frame_indices.shape + (256,340,3))
+def load_rgb_batch(rgb_files, frame_indices, resize=False):
+    shape = (224, 224, 3) if resize else (256, 340, 3)
+    batch_data = np.zeros(frame_indices.shape + shape, dtype=np.float32)
 
     for i in range(frame_indices.shape[0]):
         for j in range(frame_indices.shape[1]):
-
-            batch_data[i,j,:,:,:] = load_frame(os.path.join(frames_dir, 
-                rgb_files[frame_indices[i][j]]), resize)
+            batch_data[i, j, :, :, :] = load_frame(
+                rgb_files[frame_indices[i][j]], resize
+            )
 
     return batch_data
 
 
-def load_ziprgb_batch(rgb_zipdata, rgb_files, 
-                   frame_indices, resize=False):
-
-    if resize:
-        batch_data = np.zeros(frame_indices.shape + (224,224,3))
-    else:
-        batch_data = np.zeros(frame_indices.shape + (256,340,3))
-
-    for i in range(frame_indices.shape[0]):
-        for j in range(frame_indices.shape[1]):
-
-            batch_data[i,j,:,:,:] = load_zipframe(rgb_zipdata, 
-                rgb_files[frame_indices[i][j]], resize)
-
-    return batch_data
-
-
-def load_flow_batch(frames_dir, flow_x_files, flow_y_files, 
-                    frame_indices, resize=False):
-
-    if resize:
-        batch_data = np.zeros(frame_indices.shape + (224,224,2))
-    else:
-        batch_data = np.zeros(frame_indices.shape + (256,340,2))
-
-    for i in range(frame_indices.shape[0]):
-        for j in range(frame_indices.shape[1]):
-
-            batch_data[i,j,:,:,0] = load_frame(os.path.join(frames_dir, 
-                flow_x_files[frame_indices[i][j]]), resize)
-
-            batch_data[i,j,:,:,1] = load_frame(os.path.join(frames_dir, 
-                flow_y_files[frame_indices[i][j]]), resize)
-
-    return batch_data
-
-
-def load_zipflow_batch(flow_x_zipdata, flow_y_zipdata, 
-                    flow_x_files, flow_y_files, 
-                    frame_indices, resize=False):
-
-    if resize:
-        batch_data = np.zeros(frame_indices.shape + (224,224,2))
-    else:
-        batch_data = np.zeros(frame_indices.shape + (256,340,2))
-
-    for i in range(frame_indices.shape[0]):
-        for j in range(frame_indices.shape[1]):
-
-            batch_data[i,j,:,:,0] = load_zipframe(flow_x_zipdata, 
-                flow_x_files[frame_indices[i][j]], resize)
-
-            batch_data[i,j,:,:,1] = load_zipframe(flow_y_zipdata, 
-                flow_y_files[frame_indices[i][j]], resize)
-
-    return batch_data
-
-
-
-def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
-    input_dir='', output_dir='', batch_size=40, usezip=False):
-
+def run(
+    sample_mode="oversample",
+    frequency=16,
+    input_dir="",
+    output_dir="",
+    batch_size=40,
+):
     chunk_size = 16
 
-    assert(mode in ['rgb', 'flow'])
-    assert(sample_mode in ['oversample', 'center_crop', 'resize'])
-    
-    # setup the model
-    if mode == 'flow':
-        i3d = InceptionI3d(400, in_channels=2)
-    else:
-        i3d = InceptionI3d(400, in_channels=3)
-    
-    #i3d.replace_logits(157)
-    i3d.load_state_dict(torch.load(load_model))
-    i3d.cuda()
+    assert sample_mode in ["oversample", "center_crop", "resize"]
 
-    i3d.train(False)  # Set model to evaluate mode
+    model = MoViNet(_C.MODEL.MoViNetA2, causal=False, pretrained=True)
+    model.classifier = torch.nn.Identity()  # type: ignore
+    model.cuda()
+    model.eval()
+
+    torch.cuda.empty_cache()
+    # data = torch.rand((1, 3, 16, 224, 224))
 
     def forward_batch(b_data):
         b_data = b_data.transpose([0, 4, 1, 2, 3])
-        b_data = torch.from_numpy(b_data)   # b,c,t,h,w  # 40x3x16x224x224
+        b_data = torch.from_numpy(b_data)  # b,c,t,h,w  # 40x3x16x224x224
 
-        b_data = Variable(b_data.cuda(), volatile=True).float()
-        b_features = i3d.extract_features(b_data)
-        
-        b_features = b_features.data.cpu().numpy()[:,:,0,0,0]
+        with torch.no_grad():
+            model.clean_activation_buffers()
+            b_data_cuda = b_data.cuda()
+            b_features = model(b_data_cuda)
+
+        b_features = b_features.data.cpu().numpy()
         return b_features
 
+    video_names = [
+        name
+        for name in os.listdir(input_dir)
+        if name.endswith("mp4") or name.endswith("avi")
+    ]
+    os.makedirs(output_dir, exist_ok=True)
 
-    video_names = [i for i in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, i))]
-
-    for video_name in video_names:
-
+    for video_name in tqdm(video_names):
         # save_file = '{}-{}.npz'.format(video_name, mode)
-        save_file = '{}.npy'.format(video_name)
+        save_file = "{}.npy".format(video_name)
         if save_file in os.listdir(output_dir):
             continue
 
-        frames_dir = os.path.join(input_dir, video_name)
-
-
-        if mode == 'rgb':
-            # if usezip:
-            #     rgb_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'img.zip'), 'r')
-            #     rgb_files = [i for i in rgb_zipdata.namelist() if i.startswith('img')]
-            # else:
-            #     rgb_files = [i for i in os.listdir(frames_dir) if i.startswith('img')]
-
-            if usezip:
-                rgb_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'img.zip'), 'r')
-                rgb_files = [i for i in rgb_zipdata.namelist() if i.endswith('jpg')]
-            else:
-                rgb_files = [i for i in os.listdir(frames_dir) if i.endswith('jpg')]
-
-            rgb_files.sort()
-            frame_cnt = len(rgb_files)
-
-        else:
-            if usezip:
-                flow_x_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'flow_x.zip'), 'r')
-                flow_x_files = [i for i in flow_x_zipdata.namelist() if i.startswith('x_')]
-
-                flow_y_zipdata = zipfile.ZipFile(os.path.join(frames_dir, 'flow_y.zip'), 'r')
-                flow_y_files = [i for i in flow_y_zipdata.namelist() if i.startswith('y_')]
-            else:
-                flow_x_files = [i for i in os.listdir(frames_dir) if i.startswith('flow_x')]
-                flow_y_files = [i for i in os.listdir(frames_dir) if i.startswith('flow_y')]
-
-            flow_x_files.sort()
-            flow_y_files.sort()
-            assert(len(flow_y_files) == len(flow_x_files))
-            frame_cnt = len(flow_y_files)
-
-
+        video_path = os.path.join(input_dir, video_name)
+        rgb_files = [frame for frame in resampled_video(video_path)]
+        frame_cnt = len(rgb_files)
 
         # clipped_length = (frame_cnt // chunk_size) * chunk_size   # Cut frames
-
         # Cut frames
-        assert(frame_cnt > chunk_size)
+        assert frame_cnt > chunk_size
         clipped_length = frame_cnt - chunk_size
-        clipped_length = (clipped_length // frequency) * frequency  # The start of last chunk
+        # The start of last chunk
+        clipped_length = (clipped_length // frequency) * frequency
 
-        frame_indices = [] # Frames to chunks
+        frame_indices = []  # Frames to chunks
         for i in range(clipped_length // frequency + 1):
             frame_indices.append(
-                [j for j in range(i * frequency, i * frequency + chunk_size)])
+                [j for j in range(i * frequency, i * frequency + chunk_size)]
+            )
 
         frame_indices = np.array(frame_indices)
 
-        #frame_indices = np.reshape(frame_indices, (-1, 16)) # Frames to chunks
+        # frame_indices = np.reshape(frame_indices, (-1, 16)) # Frames to chunks
         chunk_num = frame_indices.shape[0]
 
-        batch_num = int(np.ceil(chunk_num / batch_size))    # Chunks to batches
+        batch_num = int(np.ceil(chunk_num / batch_size))  # Chunks to batches
         frame_indices = np.array_split(frame_indices, batch_num, axis=0)
 
-        if sample_mode == 'oversample':
+        if sample_mode == "oversample":
             full_features = [[] for i in range(10)]
         else:
             full_features = [[]]
 
         for batch_id in range(batch_num):
-            
-            require_resize = sample_mode == 'resize'
+            require_resize = sample_mode == "resize"
 
-            if mode == 'rgb':
-                if usezip:
-                    batch_data = load_ziprgb_batch(rgb_zipdata, rgb_files, 
-                        frame_indices[batch_id], require_resize)
-                else:                
-                    batch_data = load_rgb_batch(frames_dir, rgb_files, 
-                        frame_indices[batch_id], require_resize)
-            else:
-                if usezip:
-                    batch_data = load_zipflow_batch(
-                        flow_x_zipdata, flow_y_zipdata,
-                        flow_x_files, flow_y_files, 
-                        frame_indices[batch_id], require_resize)
-                else:
-                    batch_data = load_flow_batch(frames_dir, 
-                        flow_x_files, flow_y_files, 
-                        frame_indices[batch_id], require_resize)
+            batch_data = load_rgb_batch(
+                rgb_files, frame_indices[batch_id], require_resize
+            )
 
-            if sample_mode == 'oversample':
+            if sample_mode == "oversample":
                 batch_data_ten_crop = oversample_data(batch_data)
 
                 for i in range(10):
-                    pdb.set_trace()
-                    assert(batch_data_ten_crop[i].shape[-2]==224)
-                    assert(batch_data_ten_crop[i].shape[-3]==224)
+                    # print(batch_data_ten_crop[i].shape)  # (38, 16, 224, 224, 3)
+                    assert batch_data_ten_crop[i].shape[-2] == 224
+                    assert batch_data_ten_crop[i].shape[-3] == 224
                     full_features[i].append(forward_batch(batch_data_ten_crop[i]))
 
             else:
-                if sample_mode == 'center_crop':
-                    batch_data = batch_data[:,:,16:240,58:282,:] # Centrer Crop  (39, 16, 224, 224, 2)
-                
-                assert(batch_data.shape[-2]==224)
-                assert(batch_data.shape[-3]==224)
+                if sample_mode == "center_crop":
+                    # Centrer Crop  (39, 16, 224, 224, 2)
+                    batch_data = batch_data[:, :, 16:240, 58:282, :]
+
+                assert batch_data.shape[-2] == 224
+                assert batch_data.shape[-3] == 224
                 full_features[0].append(forward_batch(batch_data))
-
-
 
         full_features = [np.concatenate(i, axis=0) for i in full_features]
         full_features = [np.expand_dims(i, axis=0) for i in full_features]
@@ -314,33 +201,25 @@ def run(mode='rgb', load_model='', sample_mode='oversample', frequency=16,
         #     video_name=video_name)
         np.save(os.path.join(output_dir, save_file), full_features)
 
-        print('{} done: {} / {}, {}'.format(
-            video_name, frame_cnt, clipped_length, full_features.shape))
+        print(
+            f"{video_name} done: {frame_cnt} / {clipped_length}, {full_features.shape}"
+        )
 
 
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', type=str)
-    parser.add_argument('--load_model', type=str)
-    parser.add_argument('--input_dir', type=str)
-    parser.add_argument('--output_dir', type=str)
-    parser.add_argument('--batch_size', type=int, default=40)
-    parser.add_argument('--sample_mode', type=str)
-    parser.add_argument('--frequency', type=int, default=16)
-
-    parser.add_argument('--usezip', dest='usezip', action='store_true')
-    parser.add_argument('--no-usezip', dest='usezip', action='store_false')
-    parser.set_defaults(usezip=True)
+    parser.add_argument("--input_dir", type=str)
+    parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--batch_size", type=int, default=40)
+    parser.add_argument("--sample_mode", type=str)
+    parser.add_argument("--frequency", type=int, default=16)
 
     args = parser.parse_args()
 
-    run(mode=args.mode, 
-        load_model=args.load_model,
+    run(
         sample_mode=args.sample_mode,
-        input_dir=args.input_dir, 
+        input_dir=args.input_dir,
         output_dir=args.output_dir,
         batch_size=args.batch_size,
         frequency=args.frequency,
-        usezip=args.usezip)
+    )
