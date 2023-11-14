@@ -30,7 +30,6 @@ def resampled_video(input_path, target_fps=25):
 
 
 def load_frame(frame, resize=False):
-    # data = Image.open(frame)
     data = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     # print(data.shape)  # (180, 320, 3)
@@ -38,7 +37,6 @@ def load_frame(frame, resize=False):
     # assert data.shape[0] == 340
 
     if resize:
-        # data = data.resize((224, 224), Image.ANTIALIAS)
         data = cv2.resize(data, (224, 224), interpolation=cv2.INTER_AREA)
 
     data = data.astype(np.float32)
@@ -50,33 +48,21 @@ def load_frame(frame, resize=False):
     return data
 
 
-def oversample_data(data):  # (39, 16, 224, 224, 2)  # Check twice
+def oversample_data(data):
+    # (39, 16, 224, 224, 2)  # Check twice
+    def slice(arr):
+        return [
+            arr[:, :, :224, :224, :],
+            arr[:, :, :224, -224:, :],
+            arr[:, :, 16:240, 58:282, :],
+            arr[:, :, -224:, :224, :],
+            arr[:, :, -224:, -224:, :],
+        ]
+
+    data_orig = np.array(data)
     data_flip = np.array(data[:, :, :, ::-1, :])
 
-    data_1 = np.array(data[:, :, :224, :224, :])
-    data_2 = np.array(data[:, :, :224, -224:, :])
-    data_3 = np.array(data[:, :, 16:240, 58:282, :])
-    data_4 = np.array(data[:, :, -224:, :224, :])
-    data_5 = np.array(data[:, :, -224:, -224:, :])
-
-    data_f_1 = np.array(data_flip[:, :, :224, :224, :])
-    data_f_2 = np.array(data_flip[:, :, :224, -224:, :])
-    data_f_3 = np.array(data_flip[:, :, 16:240, 58:282, :])
-    data_f_4 = np.array(data_flip[:, :, -224:, :224, :])
-    data_f_5 = np.array(data_flip[:, :, -224:, -224:, :])
-
-    return [
-        data_1,
-        data_2,
-        data_3,
-        data_4,
-        data_5,
-        data_f_1,
-        data_f_2,
-        data_f_3,
-        data_f_4,
-        data_f_5,
-    ]
+    return slice(data_orig) + slice(data_flip)
 
 
 def load_rgb_batch(rgb_files, frame_indices, resize=False):
@@ -129,11 +115,11 @@ def run(
         if name.endswith("mp4") or name.endswith("avi")
     ]
     os.makedirs(output_dir, exist_ok=True)
+    existent_files = os.listdir(output_dir)
 
     for video_name in tqdm(video_names):
-        # save_file = '{}-{}.npz'.format(video_name, mode)
         save_file = "{}.npy".format(video_name)
-        if save_file in os.listdir(output_dir):
+        if save_file in existent_files:
             continue
 
         video_path = os.path.join(input_dir, video_name)
@@ -162,7 +148,7 @@ def run(
         frame_indices = np.array_split(frame_indices, batch_num, axis=0)
 
         if sample_mode == "oversample":
-            full_features = [[] for i in range(10)]
+            full_features = [[]] * 10
         else:
             full_features = [[]]
 
@@ -195,10 +181,6 @@ def run(
         full_features = [np.expand_dims(i, axis=0) for i in full_features]
         full_features = np.concatenate(full_features, axis=0)
 
-        # np.savez(os.path.join(output_dir, save_file),
-        #     feature=full_features,
-        #     frame_cnt=frame_cnt,
-        #     video_name=video_name)
         np.save(os.path.join(output_dir, save_file), full_features)
 
         print(
